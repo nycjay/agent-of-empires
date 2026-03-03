@@ -13,7 +13,7 @@ use std::time::Instant;
 use tui_input::Input;
 
 use crate::session::{
-    config::{load_config, save_config},
+    config::{load_config, save_config, SortOrder},
     flatten_tree, resolve_config, DefaultTerminalMode, Group, GroupTree, Instance, Item, Storage,
 };
 use crate::tmux::AvailableTools;
@@ -103,6 +103,7 @@ pub struct HomeView {
     pub(super) selected_session: Option<String>,
     pub(super) selected_group: Option<String>,
     pub(super) view_mode: ViewMode,
+    pub(super) sort_order: SortOrder,
 
     // Dialogs
     pub(super) show_help: bool,
@@ -179,9 +180,8 @@ impl HomeView {
             .map(|i| (i.id.clone(), i.clone()))
             .collect();
         let group_tree = GroupTree::new_with_groups(&instances, &groups);
-        let flat_items = flatten_tree(&group_tree, &instances);
 
-        // Load the resolved config to get the default terminal mode and sound config
+        // Load the resolved config to get the default terminal mode, sound config, and sort order
         let resolved = resolve_config(storage.profile());
         let default_terminal_mode = resolved
             .as_ref()
@@ -194,6 +194,13 @@ impl HomeView {
             .as_ref()
             .map(|config| config.sound.clone())
             .unwrap_or_default();
+        let user_config = load_config().ok().flatten();
+        let sort_order = user_config
+            .as_ref()
+            .and_then(|c| c.app_state.sort_order)
+            .unwrap_or_default();
+
+        let flat_items = flatten_tree(&group_tree, &instances, sort_order);
 
         let mut view = Self {
             storage,
@@ -206,6 +213,7 @@ impl HomeView {
             selected_session: None,
             selected_group: None,
             view_mode: ViewMode::default(),
+            sort_order,
             show_help: false,
             new_dialog: None,
             confirm_dialog: None,
@@ -239,9 +247,7 @@ impl HomeView {
             settings_view: None,
             settings_close_confirm: false,
             diff_view: None,
-            list_width: load_config()
-                .ok()
-                .flatten()
+            list_width: user_config
                 .and_then(|c| c.app_state.home_list_width)
                 .unwrap_or(35),
         };
@@ -270,7 +276,7 @@ impl HomeView {
             .collect();
         self.groups = groups;
         self.group_tree = GroupTree::new_with_groups(&self.instances, &self.groups);
-        self.flat_items = flatten_tree(&self.group_tree, &self.instances);
+        self.flat_items = flatten_tree(&self.group_tree, &self.instances, self.sort_order);
 
         if self.cursor >= self.flat_items.len() && !self.flat_items.is_empty() {
             self.cursor = self.flat_items.len() - 1;

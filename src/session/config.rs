@@ -47,6 +47,46 @@ pub struct Config {
     pub app_state: AppStateConfig,
 }
 
+/// Session list sort order
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SortOrder {
+    #[default]
+    Newest,
+    Oldest,
+    AZ,
+    ZA,
+}
+
+impl SortOrder {
+    pub fn cycle(self) -> Self {
+        match self {
+            SortOrder::Newest => SortOrder::Oldest,
+            SortOrder::Oldest => SortOrder::AZ,
+            SortOrder::AZ => SortOrder::ZA,
+            SortOrder::ZA => SortOrder::Newest,
+        }
+    }
+
+    pub fn cycle_reverse(self) -> Self {
+        match self {
+            SortOrder::Newest => SortOrder::ZA,
+            SortOrder::Oldest => SortOrder::Newest,
+            SortOrder::AZ => SortOrder::Oldest,
+            SortOrder::ZA => SortOrder::AZ,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SortOrder::Newest => "Newest",
+            SortOrder::Oldest => "Oldest",
+            SortOrder::AZ => "A-Z",
+            SortOrder::ZA => "Z-A",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppStateConfig {
     #[serde(default)]
@@ -63,6 +103,9 @@ pub struct AppStateConfig {
 
     #[serde(default)]
     pub has_seen_custom_instruction_warning: bool,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort_order: Option<SortOrder>,
 }
 
 /// Session-related configuration defaults

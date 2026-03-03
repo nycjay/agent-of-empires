@@ -141,7 +141,7 @@ impl HomeView {
             self.groups = self.group_tree.get_all_groups();
             self.storage
                 .save_with_groups(&self.instances, &self.group_tree)?;
-            self.flat_items = flatten_tree(&self.group_tree, &self.instances);
+            self.flat_items = flatten_tree(&self.group_tree, &self.instances, self.sort_order);
         }
         Ok(())
     }

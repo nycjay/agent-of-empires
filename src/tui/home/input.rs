@@ -5,6 +5,7 @@ use tui_input::backend::crossterm::EventHandler;
 use tui_input::Input;
 
 use super::{HomeView, TerminalMode, ViewMode};
+use crate::session::config::{load_config, save_config, SortOrder};
 use crate::session::{flatten_tree, list_profiles, repo_config, resolve_config, Item, Status};
 use crate::tui::app::Action;
 use crate::tui::dialogs::{
@@ -556,6 +557,12 @@ impl HomeView {
                     }
                 }
             }
+            KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.apply_sort_order(self.sort_order.cycle_reverse());
+            }
+            KeyCode::Char('o') => {
+                self.apply_sort_order(self.sort_order.cycle());
+            }
             KeyCode::Up | KeyCode::Char('k') => {
                 self.move_cursor(-1);
             }
@@ -669,9 +676,26 @@ impl HomeView {
         }
     }
 
+    fn apply_sort_order(&mut self, new_order: SortOrder) {
+        self.sort_order = new_order;
+        self.flat_items = flatten_tree(&self.group_tree, &self.instances, self.sort_order);
+        if self.search_active && !self.search_query.value().is_empty() {
+            self.update_search();
+        } else {
+            self.cursor = self.cursor.min(self.flat_items.len().saturating_sub(1));
+            self.update_selected();
+        }
+        if let Ok(mut config) = load_config().map(|c| c.unwrap_or_default()) {
+            config.app_state.sort_order = Some(self.sort_order);
+            if let Err(e) = save_config(&config) {
+                tracing::warn!("Failed to save sort order: {}", e);
+            }
+        }
+    }
+
     fn toggle_group_collapsed(&mut self, path: &str) {
         self.group_tree.toggle_collapsed(path);
-        self.flat_items = flatten_tree(&self.group_tree, &self.instances);
+        self.flat_items = flatten_tree(&self.group_tree, &self.instances, self.sort_order);
         if let Err(e) = self
             .storage
             .save_with_groups(&self.instances, &self.group_tree)

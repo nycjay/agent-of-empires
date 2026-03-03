@@ -73,7 +73,7 @@ impl HomeView {
 
         // Render dialogs on top
         if self.show_help {
-            HelpOverlay::render(frame, area, theme);
+            HelpOverlay::render(frame, area, theme, self.sort_order);
         }
 
         if let Some(dialog) = &self.new_dialog {
