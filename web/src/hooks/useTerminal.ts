@@ -1,17 +1,39 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import type { ResizeMessage } from "../lib/types";
 
+const MAX_RETRIES = 3;
+const RETRY_DELAY = 5000;
+
+export interface TerminalState {
+  connected: boolean;
+  reconnecting: boolean;
+  retryCount: number;
+  retryCountdown: number;
+}
+
 /**
  * Manages an xterm.js terminal connected to a PTY-relayed WebSocket.
- * Returns a ref to attach to a container div.
+ * Returns a ref to attach to a container div, plus connection state.
  */
-export function useTerminal(sessionId: string | null) {
+export function useTerminal(
+  sessionId: string | null,
+  wsPath: string = "ws",
+) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const retryCountRef = useRef(0);
+  const [state, setState] = useState<TerminalState>({
+    connected: false,
+    reconnecting: false,
+    retryCount: 0,
+    retryCountdown: 0,
+  });
 
   useEffect(() => {
     if (!sessionId || !containerRef.current) return;
@@ -19,21 +41,26 @@ export function useTerminal(sessionId: string | null) {
     // Clean up previous instance
     wsRef.current?.close();
     termRef.current?.dispose();
+    if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    if (countdownRef.current) clearInterval(countdownRef.current);
+    retryCountRef.current = 0;
 
     const container = containerRef.current;
     container.innerHTML = "";
 
+    const fontSize = window.innerWidth < 768 ? 12 : 14;
+
     const term = new Terminal({
       cursorBlink: true,
-      fontSize: 14,
+      fontSize,
       fontFamily: "'JetBrains Mono', ui-monospace, monospace",
       theme: {
-        background: "#020617",
+        background: "#17171a",
         foreground: "#e2e8f0",
         cursor: "#d97706",
-        cursorAccent: "#020617",
+        cursorAccent: "#17171a",
         selectionBackground: "rgba(217, 119, 6, 0.2)",
-        black: "#0f172a",
+        black: "#1c1c1f",
         red: "#ef4444",
         green: "#22c55e",
         yellow: "#fbbf24",
@@ -59,60 +86,112 @@ export function useTerminal(sessionId: string | null) {
     termRef.current = term;
     fitRef.current = fitAddon;
 
-    // Fit after DOM settles
     requestAnimationFrame(() => fitAddon.fit());
 
-    // WebSocket for PTY relay
-    const proto = location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(
-      `${proto}//${location.host}/sessions/${sessionId}/ws`,
-    );
-    ws.binaryType = "arraybuffer";
-    wsRef.current = ws;
+    let dataDisposable: { dispose: () => void } | null = null;
+    let resizeDisposable: { dispose: () => void } | null = null;
 
-    ws.onopen = () => {
-      term.focus();
-      const dims = fitAddon.proposeDimensions();
-      if (dims) {
-        const msg: ResizeMessage = {
-          type: "resize",
-          cols: dims.cols,
-          rows: dims.rows,
-        };
-        ws.send(JSON.stringify(msg));
-      }
-    };
+    function connect() {
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      const ws = new WebSocket(
+        `${proto}//${location.host}/sessions/${sessionId}/${wsPath}`,
+      );
+      ws.binaryType = "arraybuffer";
+      wsRef.current = ws;
 
-    ws.onmessage = (event: MessageEvent) => {
-      if (event.data instanceof ArrayBuffer) {
-        term.write(new Uint8Array(event.data));
-      } else {
-        term.write(event.data as string);
-      }
-    };
+      ws.onopen = () => {
+        retryCountRef.current = 0;
+        setState({
+          connected: true,
+          reconnecting: false,
+          retryCount: 0,
+          retryCountdown: 0,
+        });
+        term.focus();
+        const dims = fitAddon.proposeDimensions();
+        if (dims) {
+          const msg: ResizeMessage = {
+            type: "resize",
+            cols: dims.cols,
+            rows: dims.rows,
+          };
+          ws.send(JSON.stringify(msg));
+        }
+      };
 
-    ws.onclose = () => {
-      term.write("\r\n\x1b[33m[Connection closed]\x1b[0m\r\n");
-    };
+      ws.onmessage = (event: MessageEvent) => {
+        if (event.data instanceof ArrayBuffer) {
+          term.write(new Uint8Array(event.data));
+        } else {
+          term.write(event.data as string);
+        }
+      };
 
-    ws.onerror = () => {
-      term.write("\r\n\x1b[31m[WebSocket error]\x1b[0m\r\n");
-    };
+      ws.onclose = () => {
+        setState((prev) => ({ ...prev, connected: false }));
+        if (retryCountRef.current < MAX_RETRIES) {
+          retryCountRef.current += 1;
+          const count = retryCountRef.current;
+          let countdown = RETRY_DELAY / 1000;
 
-    // Relay keystrokes as binary
-    const dataDisposable = term.onData((data: string) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(new TextEncoder().encode(data));
-      }
-    });
+          setState({
+            connected: false,
+            reconnecting: true,
+            retryCount: count,
+            retryCountdown: countdown,
+          });
 
-    // Relay resize
-    const resizeDisposable = term.onResize(({ cols, rows }) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        const msg: ResizeMessage = { type: "resize", cols, rows };
-        ws.send(JSON.stringify(msg));
-      }
-    });
+          term.write(
+            `\r\n\x1b[33m[Disconnected, reconnecting in ${countdown}s... (${count}/${MAX_RETRIES})]\x1b[0m\r\n`,
+          );
+
+          countdownRef.current = setInterval(() => {
+            countdown -= 1;
+            if (countdown > 0) {
+              setState((prev) => ({ ...prev, retryCountdown: countdown }));
+            }
+          }, 1000);
+
+          retryTimerRef.current = setTimeout(() => {
+            if (countdownRef.current) clearInterval(countdownRef.current);
+            connect();
+          }, RETRY_DELAY);
+        } else {
+          term.write(
+            "\r\n\x1b[31m[Connection lost. Click retry or press Enter to reconnect.]\x1b[0m\r\n",
+          );
+          setState({
+            connected: false,
+            reconnecting: false,
+            retryCount: retryCountRef.current,
+            retryCountdown: 0,
+          });
+        }
+      };
+
+      ws.onerror = () => {
+        // onclose will fire after onerror
+      };
+
+      // Relay keystrokes as binary
+      dataDisposable?.dispose();
+      dataDisposable = term.onData((data: string) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(new TextEncoder().encode(data));
+        }
+      });
+
+      // Relay resize
+      resizeDisposable?.dispose();
+      resizeDisposable = term.onResize(({ cols, rows }) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          const msg: ResizeMessage = { type: "resize", cols, rows };
+          ws.send(JSON.stringify(msg));
+        }
+      });
+    }
+
+    connect();
 
     // Window resize -> fit terminal
     const handleResize = () => fitAddon.fit();
@@ -120,15 +199,29 @@ export function useTerminal(sessionId: string | null) {
 
     return () => {
       window.removeEventListener("resize", handleResize);
-      dataDisposable.dispose();
-      resizeDisposable.dispose();
-      ws.close();
+      dataDisposable?.dispose();
+      resizeDisposable?.dispose();
+      wsRef.current?.close();
       term.dispose();
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+      if (countdownRef.current) clearInterval(countdownRef.current);
       termRef.current = null;
       wsRef.current = null;
       fitRef.current = null;
     };
-  }, [sessionId]);
+  }, [sessionId, wsPath]);
 
-  return containerRef;
+  const manualReconnect = () => {
+    retryCountRef.current = 0;
+    setState({
+      connected: false,
+      reconnecting: true,
+      retryCount: 0,
+      retryCountdown: 0,
+    });
+    // Trigger effect by disconnecting current WS
+    wsRef.current?.close();
+  };
+
+  return { containerRef, state, manualReconnect };
 }

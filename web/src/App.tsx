@@ -1,280 +1,247 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useSessions } from "./hooks/useSessions";
+import { useWorkspaces } from "./hooks/useWorkspaces";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
-import { updateSession, createSession, deleteSession } from "./lib/api";
-import type { SessionResponse } from "./lib/types";
-import { Sidebar } from "./components/Sidebar";
+import { isSessionActive } from "./lib/session";
+import { WorkspaceSidebar } from "./components/WorkspaceSidebar";
+import { WorkspaceHeader } from "./components/WorkspaceHeader";
+import { ContentSplit } from "./components/ContentSplit";
 import { TerminalView } from "./components/TerminalView";
-import { DiffView } from "./components/DiffView";
-import { EmptyState } from "./components/EmptyState";
-import { RenameDialog } from "./components/RenameDialog";
-import { ProfileSelector } from "./components/ProfileSelector";
-import { HelpOverlay } from "./components/HelpOverlay";
+import { RightPanel } from "./components/RightPanel";
 import { SettingsView } from "./components/SettingsView";
-import { WorktreeList } from "./components/WorktreeList";
-import { ConfirmDialog } from "./components/ConfirmDialog";
-import { MobileNav } from "./components/MobileNav";
-import {
-  CreateSessionPanel,
-  type CreateSessionData,
-} from "./components/CreateSessionPanel";
-
-type ContentView = "terminal" | "diff" | "settings" | "worktrees";
+import { HelpOverlay } from "./components/HelpOverlay";
 
 export default function App() {
-  const { sessions, error, refresh } = useSessions();
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [mobileShowTerminal, setMobileShowTerminal] = useState(false);
-  const [contentView, setContentView] = useState<ContentView>("terminal");
-  const [renameTarget, setRenameTarget] = useState<SessionResponse | null>(
+  const { sessions, error } = useSessions();
+  const workspaces = useWorkspaces(sessions);
+
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(
     null,
   );
-  const [deleteTarget, setDeleteTarget] = useState<SessionResponse | null>(
-    null,
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [diffCollapsed, setDiffCollapsed] = useState(
+    () => window.innerWidth < 768,
   );
-  const [activeProfile, setActiveProfile] = useState<string | null>(null);
+  const [diffFileCount, setDiffFileCount] = useState(0);
   const [showCreate, setShowCreate] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
-  const [sidebarSearchOpen, setSidebarSearchOpen] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(
+    () => window.innerWidth >= 768,
+  );
 
-  const filteredSessions = activeProfile
-    ? sessions.filter(
-        (s) =>
-          s.group_path.startsWith(activeProfile) ||
-          s.project_path.includes(activeProfile),
-      )
-    : sessions;
+  const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId);
+  const activeSession = activeWorkspace?.sessions.find(
+    (s) => s.id === activeSessionId,
+  );
 
-  const activeSession = sessions.find((s) => s.id === activeId);
+  const alertCounts = useMemo(() => {
+    let errors = 0;
+    let waiting = 0;
+    for (const s of sessions) {
+      if (s.status === "Error") errors++;
+      if (s.status === "Waiting") waiting++;
+    }
+    return { errors, waiting };
+  }, [sessions]);
 
-  const handleSelect = (id: string) => {
-    setActiveId(id);
-    setContentView("terminal");
-    setMobileShowTerminal(true);
-  };
-
-  const handleBack = () => {
-    setMobileShowTerminal(false);
-  };
-
-  const handleRename = async (title: string, group: string) => {
-    if (!renameTarget) return;
-    await updateSession(renameTarget.id, {
-      title: title !== renameTarget.title ? title : undefined,
-      group_path: group !== renameTarget.group_path ? group : undefined,
-    });
-    setRenameTarget(null);
-    refresh();
-  };
-
-  const handleDiff = (session: SessionResponse) => {
-    setActiveId(session.id);
-    setContentView("diff");
-  };
-
-  const handleCreate = async (data: CreateSessionData) => {
-    const result = await createSession(data);
-    if (result) {
-      setShowCreate(false);
-      setActiveId(result.id);
-      setContentView("terminal");
-      refresh();
+  const handleSelectWorkspace = (workspaceId: string) => {
+    setActiveWorkspaceId(workspaceId);
+    const ws = workspaces.find((w) => w.id === workspaceId);
+    if (ws) {
+      const running = ws.sessions.find((s) => isSessionActive(s.status));
+      setActiveSessionId(running?.id ?? ws.sessions[0]?.id ?? null);
+    }
+    if (window.innerWidth < 768) {
+      setSidebarOpen(false);
     }
   };
 
-  const handleDelete = async () => {
-    if (!deleteTarget) return;
-    await deleteSession(deleteTarget.id);
-    setDeleteTarget(null);
-    if (activeId === deleteTarget.id) setActiveId(null);
-    refresh();
-  };
+  const toggleDiff = () => setDiffCollapsed((c) => !c);
 
-  // Keyboard shortcuts
   useKeyboardShortcuts(
     useCallback(
       () => ({
-        onSearch: () => setSidebarSearchOpen((v) => !v),
         onNew: () => setShowCreate(true),
-        onDelete: () => {
-          if (activeSession) setDeleteTarget(activeSession);
-        },
-        onRename: () => {
-          if (activeSession) setRenameTarget(activeSession);
-        },
-        onDiff: () => {
-          if (activeSession) handleDiff(activeSession);
-        },
+        onDiff: () => toggleDiff(),
         onEscape: () => {
           setShowCreate(false);
           setShowHelp(false);
-          setRenameTarget(null);
-          setDeleteTarget(null);
+          setShowSettings(false);
         },
         onHelp: () => setShowHelp((h) => !h),
-        onSettings: () =>
-          setContentView((v) => (v === "settings" ? "terminal" : "settings")),
+        onSettings: () => setShowSettings((s) => !s),
       }),
-      [activeSession],
+      [],
     ),
   );
 
-  return (
-    <div className="h-screen flex flex-col bg-surface-900 text-text-primary">
-      {/* Header */}
-      <header className="h-14 bg-surface-850 border-b border-surface-700/30 flex items-center px-5 shrink-0">
-        <div className="flex items-center gap-2.5">
-          <div className="w-6 h-6 rounded-md bg-brand-600/20 flex items-center justify-center">
-            <span className="font-display text-xs font-bold text-brand-500">
-              A
-            </span>
-          </div>
-          <h1 className="font-display text-base font-semibold tracking-tight text-text-bright">
-            Agent of Empires
-          </h1>
+  const renderContent = () => {
+    if (showSettings) {
+      return <SettingsView onClose={() => setShowSettings(false)} />;
+    }
+
+    if (!activeWorkspace || !activeSession) {
+      return (
+        <div className="flex-1 flex flex-col items-center justify-center bg-surface-950 px-4">
+          <p className="font-body text-sm text-text-dim text-center">
+            {workspaces.length === 0
+              ? "No sessions yet"
+              : "Select a session"}
+          </p>
         </div>
+      );
+    }
+
+    return (
+      <div className="flex-1 flex flex-col min-h-0">
+        <WorkspaceHeader
+          workspace={activeWorkspace}
+          activeSession={activeSession}
+          diffCollapsed={diffCollapsed}
+          diffFileCount={diffFileCount}
+          onToggleDiff={toggleDiff}
+        />
+
+        <ContentSplit
+          collapsed={diffCollapsed}
+          onToggleCollapse={toggleDiff}
+          left={
+            <TerminalView key={activeSessionId} session={activeSession} />
+          }
+          right={
+            <RightPanel
+              session={activeSession ?? null}
+              sessionId={activeSessionId}
+              expanded={!diffCollapsed}
+              onFileCountChange={setDiffFileCount}
+            />
+          }
+        />
+      </div>
+    );
+  };
+
+  return (
+    <div className="h-dvh flex flex-col bg-surface-900 text-text-primary overflow-hidden">
+
+      {/* Header */}
+      <header className="h-10 bg-surface-800 border-b border-surface-700/20 flex items-center px-2 shrink-0 gap-1.5">
+        <button
+          onClick={() => setSidebarOpen((o) => !o)}
+          className={`w-10 h-10 flex items-center justify-center cursor-pointer rounded-md transition-colors -ml-1 ${
+            sidebarOpen
+              ? "text-text-secondary"
+              : "text-text-dim hover:text-text-secondary"
+          }`}
+          title="Toggle sidebar"
+          aria-label="Toggle sidebar"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <line x1="9" y1="3" x2="9" y2="21" />
+          </svg>
+        </button>
+
+        <div className="flex-1" />
 
         <div className="ml-auto flex items-center gap-1">
+          {alertCounts.errors > 0 && (
+            <span className="font-mono text-[11px] px-1.5 py-0.5 rounded-full bg-status-error/15 text-status-error">
+              {alertCounts.errors} error{alertCounts.errors !== 1 ? "s" : ""}
+            </span>
+          )}
+          {alertCounts.waiting > 0 && (
+            <span className="font-mono text-[11px] px-1.5 py-0.5 rounded-full bg-status-waiting/15 text-status-waiting">
+              {alertCounts.waiting} waiting
+            </span>
+          )}
+          {error && (
+            <span className="font-mono text-xs text-status-error">
+              offline
+            </span>
+          )}
           <button
-            onClick={() => setContentView("worktrees")}
-            className="hidden md:flex items-center gap-1.5 font-body text-xs text-text-dim hover:text-text-secondary hover:bg-surface-700/30 cursor-pointer px-2.5 py-1.5 rounded-md transition-colors"
-            title="Worktrees"
+            onClick={toggleDiff}
+            className={`flex w-10 h-10 items-center justify-center cursor-pointer rounded-md transition-colors ${
+              diffCollapsed
+                ? "text-text-dim hover:text-text-secondary"
+                : "text-text-secondary"
+            }`}
+            title="Toggle diff panel"
+            aria-label="Toggle diff panel"
           >
-            Worktrees
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <line x1="15" y1="3" x2="15" y2="21" />
+            </svg>
           </button>
-          <button
-            onClick={() =>
-              setContentView((v) =>
-                v === "settings" ? "terminal" : "settings",
-              )
-            }
-            className="hidden md:flex items-center gap-1.5 font-body text-xs text-text-dim hover:text-text-secondary hover:bg-surface-700/30 cursor-pointer px-2.5 py-1.5 rounded-md transition-colors"
-            title="Settings (s)"
-          >
-            Settings
-          </button>
-          <button
-            onClick={() => setShowHelp(true)}
-            className="hidden md:flex items-center justify-center w-8 h-8 font-mono text-sm text-text-dim hover:text-text-secondary hover:bg-surface-700/30 cursor-pointer rounded-md transition-colors"
-            title="Help (?)"
-          >
-            ?
-          </button>
-          <div className="hidden md:block w-px h-5 bg-surface-700/50 mx-1" />
-          <ProfileSelector
-            activeProfile={activeProfile}
-            onSelect={setActiveProfile}
-          />
-          <div className="hidden md:block w-px h-5 bg-surface-700/50 mx-1" />
-          <span className="font-mono text-xs text-text-dim tabular-nums">
-            {error
-              ? "offline"
-              : `${filteredSessions.length} session${filteredSessions.length !== 1 ? "s" : ""}`}
-          </span>
         </div>
       </header>
 
-      {/* Main area -- sidebar and content side by side, full remaining height */}
+      {/* Main: sidebar + content */}
       <div className="flex flex-1 min-h-0">
-        {contentView !== "settings" && contentView !== "worktrees" && (
-          <div
-            className={`flex shrink-0 ${mobileShowTerminal ? "max-md:hidden" : ""}`}
-          >
-            <Sidebar
-              sessions={filteredSessions}
-              activeId={activeId}
-              onSelect={handleSelect}
-              onRefresh={refresh}
-              onRename={setRenameTarget}
-              onDiff={handleDiff}
-              onNew={() => setShowCreate(true)}
-              searchOpen={sidebarSearchOpen}
-              onSearchToggle={setSidebarSearchOpen}
-            />
-          </div>
+        {sidebarOpen && (
+          <WorkspaceSidebar
+            workspaces={workspaces}
+            activeId={activeWorkspaceId}
+            onToggle={() => setSidebarOpen(false)}
+            onSelect={handleSelectWorkspace}
+            onNew={() => setShowCreate(true)}
+            onSettings={() => setShowSettings((s) => !s)}
+          />
         )}
 
-        <div
-          className={`flex-1 flex flex-col min-h-0 ${!mobileShowTerminal && contentView !== "settings" && contentView !== "worktrees" ? "max-md:hidden" : ""}`}
-        >
-          {contentView === "settings" ? (
-            <SettingsView onClose={() => setContentView("terminal")} />
-          ) : contentView === "worktrees" ? (
-            <WorktreeList
-              onClose={() => setContentView("terminal")}
-              onNavigateToSession={(id) => {
-                setActiveId(id);
-                setContentView("terminal");
-              }}
-            />
-          ) : activeSession ? (
-            contentView === "diff" ? (
-              <DiffView
-                sessionId={activeSession.id}
-                onClose={() => setContentView("terminal")}
-              />
-            ) : (
-              <TerminalView
-                key={activeSession.id}
-                session={activeSession}
-                onBack={handleBack}
-              />
-            )
-          ) : (
-            <EmptyState />
-          )}
+        <div className="flex-1 flex flex-col min-h-0 min-w-0">
+          {renderContent()}
         </div>
       </div>
 
-      {/* Overlays */}
+      {/* Not supported dialog */}
       {showCreate && (
-        <CreateSessionPanel
-          onSubmit={handleCreate}
-          onCancel={() => setShowCreate(false)}
-        />
-      )}
-
-      {renameTarget && (
-        <RenameDialog
-          currentTitle={renameTarget.title}
-          currentGroup={renameTarget.group_path}
-          onSave={handleRename}
-          onCancel={() => setRenameTarget(null)}
-        />
-      )}
-
-      {deleteTarget && (
-        <ConfirmDialog
-          title="Delete Session"
-          message={`Delete "${deleteTarget.title}"? This will stop the session and remove it.`}
-          confirmLabel="Delete"
-          danger
-          onConfirm={handleDelete}
-          onCancel={() => setDeleteTarget(null)}
-        />
+        <div
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 animate-fade-in"
+          onClick={() => setShowCreate(false)}
+        >
+          <div
+            className="bg-surface-800 border border-surface-700/30 rounded-xl px-6 py-5 max-w-sm text-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="font-body text-sm text-text-primary mb-1">
+              Not supported yet
+            </p>
+            <p className="font-body text-xs text-text-dim mb-4">
+              Create sessions from the terminal with the aoe CLI.
+            </p>
+            <button
+              onClick={() => setShowCreate(false)}
+              className="font-body text-xs text-text-muted hover:text-text-secondary cursor-pointer"
+            >
+              Close
+            </button>
+          </div>
+        </div>
       )}
 
       {showHelp && <HelpOverlay onClose={() => setShowHelp(false)} />}
-
-      {/* Mobile bottom nav */}
-      <MobileNav
-        sessionCount={filteredSessions.length}
-        activeSessionTitle={activeSession?.title ?? null}
-        activeStatus={activeSession?.status ?? null}
-        activeTab={
-          contentView === "settings"
-            ? "settings"
-            : contentView === "worktrees"
-              ? "worktrees"
-              : "sessions"
-        }
-        onSessionsTab={() => {
-          setContentView("terminal");
-          setMobileShowTerminal(false);
-        }}
-        onSettingsTab={() => setContentView("settings")}
-        onWorktreesTab={() => setContentView("worktrees")}
-      />
     </div>
   );
 }

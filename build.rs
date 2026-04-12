@@ -69,18 +69,16 @@ fn build_frontend() {
     use std::path::Path;
     use std::process::Command;
 
-    let web_dist = Path::new("web/dist");
-
-    // Only rebuild frontend if dist/ is missing or source files changed
     println!("cargo:rerun-if-changed=web/src");
     println!("cargo:rerun-if-changed=web/index.html");
     println!("cargo:rerun-if-changed=web/package.json");
     println!("cargo:rerun-if-changed=web/vite.config.ts");
     println!("cargo:rerun-if-changed=web/tsconfig.json");
 
-    if web_dist.exists() && web_dist.join("index.html").exists() {
-        return;
-    }
+    // Always rebuild: the rerun-if-changed directives above ensure this
+    // function only runs when web source files actually changed.
+    // Previously this short-circuited when dist/ existed, which meant
+    // source changes were silently ignored.
 
     eprintln!("Building web frontend...");
 
@@ -89,14 +87,17 @@ fn build_frontend() {
         "npm is required to build with --features serve. Install Node.js: https://nodejs.org/"
     );
 
-    let status = Command::new("npm")
-        .args(["install"])
-        .current_dir("web")
-        .status()
-        .expect("Failed to run npm install");
+    // Run npm install when node_modules is missing or incomplete
+    if !Path::new("web/node_modules/.package-lock.json").exists() {
+        let status = Command::new("npm")
+            .args(["install"])
+            .current_dir("web")
+            .status()
+            .expect("Failed to run npm install");
 
-    if !status.success() {
-        panic!("npm install failed in web/. Run `cd web && npm install` to debug.");
+        if !status.success() {
+            panic!("npm install failed in web/. Run `cd web && npm install` to debug.");
+        }
     }
 
     let status = Command::new("npm")

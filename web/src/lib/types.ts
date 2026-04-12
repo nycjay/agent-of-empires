@@ -11,6 +11,7 @@ export interface SessionResponse {
   last_accessed_at: string | null;
   last_error: string | null;
   branch: string | null;
+  main_repo_path: string | null;
   is_sandboxed: boolean;
   has_terminal: boolean;
 }
@@ -32,18 +33,6 @@ export interface ResizeMessage {
   rows: number;
 }
 
-/** Agent tool info */
-export interface AgentInfo {
-  name: string;
-  binary: string;
-}
-
-/** Group info */
-export interface GroupInfo {
-  path: string;
-  session_count: number;
-}
-
 /** Diff response */
 export interface DiffResponse {
   files: DiffFileInfo[];
@@ -53,4 +42,20 @@ export interface DiffResponse {
 export interface DiffFileInfo {
   path: string;
   status: string;
+}
+
+/** Workspace status derived from session states */
+export type WorkspaceStatus = "active" | "idle";
+
+/** Workspace: a group of sessions sharing the same project + branch */
+export interface Workspace {
+  id: string;
+  branch: string | null;
+  projectPath: string;
+  displayName: string;
+  agents: string[];
+  primaryAgent: string;
+  status: WorkspaceStatus;
+  sessions: SessionResponse[];
+  diff?: DiffResponse;
 }
