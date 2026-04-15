@@ -4,6 +4,9 @@
 //! - Cookie: `aoe_token=<token>`
 //! - Query parameter: `?token=<token>` (sets the cookie for future requests)
 //! - WebSocket protocol header: `Sec-WebSocket-Protocol: <token>`
+//! - Authorization header: `Authorization: Bearer <token>` (used by the PWA,
+//!   which persists the token in localStorage since iOS `start_url` strips
+//!   the query param on home-screen relaunch)
 //!
 //! Includes rate limiting (5 failed attempts = 15 min lockout) and device tracking.
 
@@ -70,6 +73,26 @@ fn build_cookie(token: &str, secure: bool, max_age_secs: u64) -> String {
     cookie
 }
 
+/// Attach both the Set-Cookie and X-Aoe-Token headers to a response. The
+/// cookie covers the browser flow; X-Aoe-Token lets the PWA update its
+/// localStorage-cached token when the server rotates. Without the header,
+/// a rotated token would brick the PWA until the user manually re-visits
+/// with a fresh `?token=` URL.
+async fn attach_token_headers(response: &mut Response, state: &AppState) {
+    let Some(current) = state.token_manager.current_token().await else {
+        return;
+    };
+    let max_age = state.token_manager.lifetime_secs().await;
+    let cookie = build_cookie(&current, state.behind_tunnel, max_age);
+    response.headers_mut().insert(
+        header::SET_COOKIE,
+        cookie.parse().expect("cookie format must be valid"),
+    );
+    if let Ok(value) = current.parse() {
+        response.headers_mut().insert("x-aoe-token", value);
+    }
+}
+
 const MAX_DEVICES: usize = 100;
 
 /// Record a successful device connection for tracking.
@@ -104,9 +127,10 @@ async fn record_device(state: &AppState, ip: IpAddr, user_agent: &str) {
     }
 }
 
-/// Extract all token candidates from the request (cookie and query parameter).
-/// Returns them in priority order so callers can try each until one validates.
-/// A stale cookie must not prevent a valid query param from being tried.
+/// Extract all token candidates from the request (cookie, query parameter, and
+/// Authorization header). Returns them in priority order so callers can try
+/// each until one validates. A stale cookie must not prevent a valid query
+/// param or Bearer token from being tried.
 fn extract_tokens(request: &Request) -> Vec<(&str, TokenSource)> {
     let mut tokens = Vec::new();
 
@@ -127,6 +151,15 @@ fn extract_tokens(request: &Request) -> Vec<(&str, TokenSource)> {
         for param in query.split('&') {
             if let Some(value) = param.strip_prefix("token=") {
                 tokens.push((value, TokenSource::QueryParam));
+            }
+        }
+    }
+
+    // Check Authorization: Bearer header
+    if let Some(auth_header) = request.headers().get(header::AUTHORIZATION) {
+        if let Ok(auth_str) = auth_header.to_str() {
+            if let Some(value) = auth_str.strip_prefix("Bearer ") {
+                tokens.push((value.trim(), TokenSource::Bearer));
             }
         }
     }
@@ -157,6 +190,7 @@ enum TokenSource {
     Cookie,
     QueryParam,
     WebSocketProtocol,
+    Bearer,
 }
 
 pub async fn auth_middleware(
@@ -264,17 +298,10 @@ pub async fn auth_middleware(
                         let mut response =
                             axum::response::Redirect::temporary("/login").into_response();
 
-                        // Set token cookie on the redirect so the browser has it
-                        // when following the redirect to /login
+                        // Set token cookie/header on the redirect so the browser
+                        // has the current token when it follows the redirect.
                         if source == TokenSource::QueryParam || needs_upgrade {
-                            if let Some(current) = state.token_manager.current_token().await {
-                                let max_age = state.token_manager.lifetime_secs().await;
-                                let cookie = build_cookie(&current, state.behind_tunnel, max_age);
-                                response.headers_mut().insert(
-                                    header::SET_COOKIE,
-                                    cookie.parse().expect("cookie format must be valid"),
-                                );
-                            }
+                            attach_token_headers(&mut response, &state).await;
                         }
 
                         return response;
@@ -285,16 +312,9 @@ pub async fn auth_middleware(
                 let session_id = session_id.expect("valid session implies session_id exists");
                 let mut response = next.run(request).await;
 
-                // Set token cookie if needed
+                // Set token cookie/header if needed
                 if source == TokenSource::QueryParam || needs_upgrade {
-                    if let Some(current) = state.token_manager.current_token().await {
-                        let max_age = state.token_manager.lifetime_secs().await;
-                        let cookie = build_cookie(&current, state.behind_tunnel, max_age);
-                        response.headers_mut().insert(
-                            header::SET_COOKIE,
-                            cookie.parse().expect("cookie format must be valid"),
-                        );
-                    }
+                    attach_token_headers(&mut response, &state).await;
                 }
 
                 // Refresh login session cookie (sliding window)
@@ -311,18 +331,13 @@ pub async fn auth_middleware(
 
         let mut response = next.run(request).await;
 
-        // Set cookie if authenticated via query param or if token needs upgrade
-        let should_set_cookie = source == TokenSource::QueryParam || needs_upgrade;
+        // Set cookie/X-Aoe-Token if authenticated via query param or if token
+        // needs upgrade. The X-Aoe-Token header lets the PWA update its
+        // localStorage-cached token without a full page reload.
+        let should_refresh = source == TokenSource::QueryParam || needs_upgrade;
 
-        if should_set_cookie {
-            if let Some(current) = state.token_manager.current_token().await {
-                let max_age = state.token_manager.lifetime_secs().await;
-                let cookie = build_cookie(&current, state.behind_tunnel, max_age);
-                response.headers_mut().insert(
-                    header::SET_COOKIE,
-                    cookie.parse().expect("cookie format must be valid"),
-                );
-            }
+        if should_refresh {
+            attach_token_headers(&mut response, &state).await;
         }
 
         return response;
@@ -432,6 +447,53 @@ mod tests {
         assert!(cookie.contains("SameSite=Strict"));
         assert!(cookie.contains("Max-Age=14400"));
         assert!(!cookie.contains("Secure"));
+    }
+
+    fn build_request_with_headers(headers: Vec<(&'static str, &'static str)>) -> Request {
+        let mut builder = Request::builder().uri("/api/sessions");
+        for (name, value) in headers {
+            builder = builder.header(name, value);
+        }
+        builder.body(axum::body::Body::empty()).unwrap()
+    }
+
+    #[test]
+    fn extract_tokens_reads_bearer_header() {
+        let req = build_request_with_headers(vec![("authorization", "Bearer abc123")]);
+        let tokens = extract_tokens(&req);
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].0, "abc123");
+        assert_eq!(tokens[0].1, TokenSource::Bearer);
+    }
+
+    #[test]
+    fn extract_tokens_cookie_wins_over_bearer() {
+        let req = build_request_with_headers(vec![
+            ("cookie", "aoe_token=cookie_tok"),
+            ("authorization", "Bearer bearer_tok"),
+        ]);
+        let tokens = extract_tokens(&req);
+        // Priority order: cookie first, then Bearer. Both are attempted until
+        // one validates, so order matters for skipping bad cookies.
+        assert_eq!(tokens[0].0, "cookie_tok");
+        assert_eq!(tokens[0].1, TokenSource::Cookie);
+        assert_eq!(tokens[1].0, "bearer_tok");
+        assert_eq!(tokens[1].1, TokenSource::Bearer);
+    }
+
+    #[test]
+    fn extract_tokens_ignores_non_bearer_authorization() {
+        let req = build_request_with_headers(vec![("authorization", "Basic dXNlcjpwYXNz")]);
+        let tokens = extract_tokens(&req);
+        assert!(tokens.is_empty());
+    }
+
+    #[test]
+    fn extract_tokens_trims_bearer_value() {
+        let req = build_request_with_headers(vec![("authorization", "Bearer   padded  ")]);
+        let tokens = extract_tokens(&req);
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].0, "padded");
     }
 
     #[test]
