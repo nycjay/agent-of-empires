@@ -13,6 +13,7 @@ const MOBILE_GESTURES = [
   { key: "Two fingers", desc: "Swipe up/down to scroll the terminal (tmux copy-mode)" },
   { key: "Tap pane", desc: "Open the soft keyboard" },
   { key: "Long-press ↑↓", desc: "Drag horizontally to emit ← →" },
+  { key: "Hold session", desc: "Long-press a session to rename it" },
 ];
 
 const IS_MAC =

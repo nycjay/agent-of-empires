@@ -13,6 +13,7 @@ interface Props {
   groups: RepoGroup[];
   activeId: string | null;
   creatingForProject: string | null;
+  open: boolean;
   onToggle: () => void;
   onSelect: (workspaceId: string) => void;
   onToggleRepo: (repoId: string) => void;
@@ -64,6 +65,14 @@ const SessionRow = memo(function SessionRow({
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(label);
   const renameRef = useRef<HTMLInputElement>(null);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressFired = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      if (longPressTimer.current) clearTimeout(longPressTimer.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (renaming) renameRef.current?.select();
@@ -85,7 +94,32 @@ const SessionRow = memo(function SessionRow({
     setContextMenu({ x: e.clientX, y: e.clientY });
   };
 
+  const clearLongPress = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  };
+
+  const handleTouchStart = () => {
+    clearLongPress();
+    longPressFired.current = false;
+    if (!sessionId) return;
+    longPressTimer.current = setTimeout(() => {
+      longPressFired.current = true;
+      startRename();
+    }, 500);
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    clearLongPress();
+    if (longPressFired.current) {
+      e.preventDefault();
+    }
+  };
+
   const startRename = () => {
+    if (renaming) return;
     setContextMenu(null);
     setRenameValue(label);
     setRenaming(true);
@@ -120,8 +154,12 @@ const SessionRow = memo(function SessionRow({
   return (
     <>
       <button
-        onClick={onClick}
+        onClick={() => { if (!longPressFired.current) onClick(); }}
         onContextMenu={handleContextMenu}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+        onTouchMove={clearLongPress}
+        onTouchCancel={clearLongPress}
         className={`w-full text-left py-2 cursor-pointer transition-colors duration-75 ${
           indented ? "pl-6 pr-3" : "px-3"
         } ${
@@ -255,6 +293,7 @@ export function WorkspaceSidebar({
   groups,
   activeId,
   creatingForProject,
+  open,
   onToggle,
   onSelect,
   onToggleRepo,
@@ -331,12 +370,16 @@ export function WorkspaceSidebar({
   return (
     <>
       <div
-        className="fixed inset-0 bg-black/50 z-30 md:hidden"
+        className={`fixed inset-0 z-30 md:hidden transition-opacity duration-300 ${
+          open ? "bg-black/50" : "opacity-0 pointer-events-none"
+        }`}
         onClick={onToggle}
       />
       <div
         style={{ width }}
-        className="fixed inset-y-0 left-0 z-40 md:static md:z-auto bg-surface-800 flex flex-col h-full shrink-0"
+        className={`fixed inset-y-0 left-0 z-40 md:static md:z-auto bg-surface-800 flex flex-col h-full shrink-0 transition-transform duration-300 ease-in-out md:transition-none ${
+          open ? "translate-x-0" : "-translate-x-full md:hidden"
+        }`}
       >
         <div className="px-3 pt-3 pb-1 flex items-center">
           <span className="text-sm text-text-muted flex-1">
