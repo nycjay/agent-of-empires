@@ -232,6 +232,18 @@ const AGENT_CONFIG_MOUNTS: &[AgentConfigMount] = &[
         preserve_files: &[],
         clean_files: &[],
     },
+    AgentConfigMount {
+        tool_name: "kiro",
+        host_rel: ".kiro",
+        container_suffix: ".kiro",
+        skip_entries: &["sandbox", "sessions", "logs", "cache"],
+        seed_files: &[],
+        copy_dirs: &["agents", "steering", "prompts", "settings"],
+        keychain_credential: None,
+        home_seed_files: &[],
+        preserve_files: &[],
+        clean_files: &[],
+    },
 ];
 
 /// Sync host agent config into the shared sandbox directory. Copies top-level files

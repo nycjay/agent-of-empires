@@ -358,6 +358,28 @@ pub const AGENTS: &[AgentDef] = &[
         install_hint:
             "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash",
     },
+    AgentDef {
+        name: "kiro",
+        binary: "kiro-cli",
+        aliases: &["kiro-cli"],
+        detection: DetectionMethod::Which("kiro-cli"),
+        yolo: Some(YoloMode::CliFlag("--trust-all-tools")),
+        instruction_flag: None,
+        set_default_command: false,
+        detect_status: status_detection::detect_kiro_status,
+        container_env: &[("KIRO_CONFIG_DIR", "/root/.kiro")],
+        // Kiro CLI supports hooks but uses a different JSON schema than
+        // Claude/Cursor/Gemini (lowercase event names, flat {command} objects
+        // inside agent config files rather than settings.json). The generic
+        // install_hooks() would write the wrong format, so hook_config is None
+        // and status falls back to the pane-based stub until a Kiro-specific
+        // hook installer is added.
+        hook_config: None,
+        resume_strategy: ResumeStrategy::Flag("--resume-id"),
+        host_only: false,
+        send_keys_enter_delay_ms: 0,
+        install_hint: "curl -fsSL https://cli.kiro.dev/install | bash",
+    },
 ];
 
 /// Look up an agent by canonical name.
@@ -441,6 +463,7 @@ mod tests {
         assert_eq!(get_agent("droid").unwrap().binary, "droid");
         assert_eq!(get_agent("settl").unwrap().binary, "settl");
         assert_eq!(get_agent("hermes").unwrap().binary, "hermes");
+        assert_eq!(get_agent("kiro").unwrap().binary, "kiro-cli");
     }
 
     #[test]
@@ -472,7 +495,7 @@ mod tests {
             names,
             vec![
                 "claude", "opencode", "vibe", "codex", "gemini", "cursor", "copilot", "pi",
-                "droid", "settl", "hermes"
+                "droid", "settl", "hermes", "kiro"
             ]
         );
     }
@@ -494,6 +517,8 @@ mod tests {
         assert_eq!(resolve_tool_name("settlers"), Some("settl"));
         assert_eq!(resolve_tool_name("catan"), Some("settl"));
         assert_eq!(resolve_tool_name("hermes"), Some("hermes"));
+        assert_eq!(resolve_tool_name("kiro"), Some("kiro"));
+        assert_eq!(resolve_tool_name("kiro-cli"), Some("kiro"));
         assert_eq!(resolve_tool_name(""), Some("claude"));
         assert_eq!(resolve_tool_name("agent"), Some("cursor"));
         assert_eq!(resolve_tool_name("unknown-tool"), None);
@@ -510,6 +535,7 @@ mod tests {
         assert_eq!(settings_index_from_name(Some("droid")), 9);
         assert_eq!(settings_index_from_name(Some("settl")), 10);
         assert_eq!(settings_index_from_name(Some("hermes")), 11);
+        assert_eq!(settings_index_from_name(Some("kiro")), 12);
 
         assert_eq!(name_from_settings_index(0), None);
         assert_eq!(name_from_settings_index(1), Some("claude"));
@@ -520,6 +546,7 @@ mod tests {
         assert_eq!(name_from_settings_index(9), Some("droid"));
         assert_eq!(name_from_settings_index(10), Some("settl"));
         assert_eq!(name_from_settings_index(11), Some("hermes"));
+        assert_eq!(name_from_settings_index(12), Some("kiro"));
         assert_eq!(name_from_settings_index(99), None);
     }
 
@@ -542,6 +569,7 @@ mod tests {
         assert_eq!(send_keys_enter_delay("claude"), 0);
         assert_eq!(send_keys_enter_delay("opencode"), 0);
         assert_eq!(send_keys_enter_delay("hermes"), 0);
+        assert_eq!(send_keys_enter_delay("kiro"), 0);
         assert_eq!(send_keys_enter_delay("unknown_agent"), 0);
     }
 
@@ -581,6 +609,10 @@ mod tests {
         assert_eq!(
             install_hint("hermes"),
             Some("curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash")
+        );
+        assert_eq!(
+            install_hint("kiro"),
+            Some("curl -fsSL https://cli.kiro.dev/install | bash")
         );
         assert!(install_hint("unknown").is_none());
     }
