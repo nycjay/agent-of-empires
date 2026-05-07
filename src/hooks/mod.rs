@@ -523,8 +523,10 @@ pub const KIRO_HOOKS_AGENT_FILE: &str = ".kiro/agents/aoe-hooks.json";
 /// Install AoE status hooks into a Kiro CLI agent config file.
 ///
 /// Writes a minimal agent config with hooks that write status to the
-/// AoE sidecar file. The agent is set as the default via `kiro-cli agent
-/// set-default` so hooks fire for every session.
+/// AoE sidecar file. This function is pure file IO and is safe to call
+/// from any context (host install, sandbox provisioning, tests). To make
+/// the agent the active default on the host, call
+/// [`set_kiro_default_agent_if_builtin`] after this returns.
 pub fn install_kiro_hooks(agent_config_path: &Path) -> Result<()> {
     let mut config: serde_json::Map<String, Value> = if agent_config_path.exists() {
         let content = std::fs::read_to_string(agent_config_path)?;
@@ -571,9 +573,20 @@ pub fn install_kiro_hooks(agent_config_path: &Path) -> Result<()> {
     let formatted = serde_json::to_string_pretty(&Value::Object(config))?;
     std::fs::write(agent_config_path, formatted)?;
 
-    // Set as default agent so hooks fire for all sessions.
-    // Only do this if the current default is the built-in kiro_default;
-    // if the user has a custom default, we don't override it.
+    tracing::info!("Installed AoE hooks in {}", agent_config_path.display());
+    Ok(())
+}
+
+/// Make `aoe-hooks` the active default Kiro agent if the user is still on
+/// Kiro's built-in default. Skipped when a user has chosen a custom default
+/// so we never silently override their preference. Best-effort: any failure
+/// (kiro-cli missing, unexpected output, command error) is logged and ignored.
+///
+/// Heuristic: parses `kiro-cli settings chat.defaultAgent` stdout for the
+/// built-in marker `kiro_default` or the "not set" / empty cases. If kiro-cli
+/// changes its output format, the worst case is a skipped set-default; the
+/// user can run `kiro-cli agent set-default aoe-hooks` manually to recover.
+pub fn set_kiro_default_agent_if_builtin() {
     let output = std::process::Command::new("kiro-cli")
         .args(["settings", "chat.defaultAgent"])
         .output();
@@ -607,14 +620,9 @@ pub fn install_kiro_hooks(agent_config_path: &Path) -> Result<()> {
     } else {
         tracing::info!(
             "Kiro has a custom default agent; skipping set-default. \
-             Run `kiro-cli agent set-default aoe-hooks` to enable status detection, \
-             or add the hooks from {} to your agent config.",
-            agent_config_path.display()
+             Run `kiro-cli agent set-default aoe-hooks` to enable status detection."
         );
     }
-
-    tracing::info!("Installed AoE hooks in {}", agent_config_path.display());
-    Ok(())
 }
 
 /// Remove AoE hooks from a Kiro CLI agent config file.

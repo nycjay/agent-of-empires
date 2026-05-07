@@ -923,11 +923,13 @@ impl Instance {
                 }
             }
         } else if self.tool == "kiro" && !self.is_sandboxed() {
-            // Kiro uses its own JSON agent config format
+            // Kiro uses its own JSON agent config format; sandbox path is
+            // handled by build_container_config.
             if let Some(home) = dirs::home_dir() {
                 let config_path = home.join(crate::hooks::KIRO_HOOKS_AGENT_FILE);
-                if let Err(e) = crate::hooks::install_kiro_hooks(&config_path) {
-                    tracing::warn!("Failed to install kiro hooks: {}", e);
+                match crate::hooks::install_kiro_hooks(&config_path) {
+                    Ok(()) => crate::hooks::set_kiro_default_agent_if_builtin(),
+                    Err(e) => tracing::warn!("Failed to install kiro hooks: {}", e),
                 }
             }
         } else if let Some(hook_cfg) = agent.and_then(|a| a.hook_config.as_ref()) {

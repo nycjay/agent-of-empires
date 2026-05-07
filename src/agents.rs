@@ -368,12 +368,11 @@ pub const AGENTS: &[AgentDef] = &[
         set_default_command: false,
         detect_status: status_detection::detect_kiro_status,
         container_env: &[("KIRO_CONFIG_DIR", "/root/.kiro")],
-        // Kiro CLI supports hooks but uses a different JSON schema than
-        // Claude/Cursor/Gemini (lowercase event names, flat {command} objects
-        // inside agent config files rather than settings.json). The generic
-        // install_hooks() would write the wrong format, so hook_config is None
-        // and status falls back to the pane-based stub until a Kiro-specific
-        // hook installer is added.
+        // Kiro uses a per-agent JSON config (lowercase event names, flat
+        // {command} objects) rather than the JSON settings.json schema shared
+        // by Claude/Cursor/Gemini, so hook_config: None and install is
+        // special-cased like hermes/settl. Status comes from the hook sidecar
+        // file written by install_kiro_hooks; the pane stub is unused.
         hook_config: None,
         resume_strategy: ResumeStrategy::Flag("--resume-id"),
         host_only: false,
