@@ -44,6 +44,7 @@ export const docsNav: NavSection[] = [
     title: "Contributing",
     items: [
       { title: "Development", href: "/docs/development/" },
+      { title: "Adding a New Agent", href: "/docs/development/adding-agents/" },
     ],
   },
 ];
