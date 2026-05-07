@@ -582,22 +582,23 @@ pub fn install_kiro_hooks(agent_config_path: &Path) -> Result<()> {
 /// so we never silently override their preference. Best-effort: any failure
 /// (kiro-cli missing, unexpected output, command error) is logged and ignored.
 ///
-/// Heuristic: parses `kiro-cli settings chat.defaultAgent` stdout for the
-/// built-in marker `kiro_default` or the "not set" / empty cases. If kiro-cli
-/// changes its output format, the worst case is a skipped set-default; the
-/// user can run `kiro-cli agent set-default aoe-hooks` manually to recover.
+/// Uses `kiro-cli settings chat.defaultAgent --format json` for structured
+/// output: returns `null` when unset, `"kiro_default"` for the built-in, or
+/// `"custom-name"` for a user-chosen agent.
 pub fn set_kiro_default_agent_if_builtin() {
     let output = std::process::Command::new("kiro-cli")
-        .args(["settings", "chat.defaultAgent"])
+        .args(["settings", "chat.defaultAgent", "--format", "json"])
         .output();
     let current_default = output
         .as_ref()
         .ok()
+        .filter(|o| o.status.success())
         .and_then(|o| String::from_utf8(o.stdout.clone()).ok())
         .unwrap_or_default();
-    let is_builtin_default = current_default.trim().is_empty()
-        || current_default.contains("kiro_default")
-        || current_default.contains("not set");
+    // With --format json, unset returns "null", set returns "\"agent-name\""
+    let trimmed = current_default.trim();
+    let is_builtin_default =
+        trimmed.is_empty() || trimmed == "null" || trimmed == "\"kiro_default\"";
 
     if is_builtin_default {
         let set_result = std::process::Command::new("kiro-cli")
