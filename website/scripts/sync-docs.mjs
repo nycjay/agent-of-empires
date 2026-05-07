@@ -112,6 +112,13 @@ const PAGES = [
     description: "Build, run, and test Agent of Empires from source.",
   },
   {
+    source: "docs/development/adding-agents.md",
+    dest: "docs/development/adding-agents.md",
+    title: "Adding a New Agent",
+    description:
+      "Step-by-step guide for adding support for a new AI coding agent to AoE.",
+  },
+  {
     source: "docs/sounds.md",
     dest: "docs/sounds.md",
     title: "Sound Effects",
@@ -149,6 +156,7 @@ const URL_MAP = {
   "docs/quick-start.md": "/docs/quick-start/",
   "docs/sounds.md": "/docs/sounds/",
   "docs/development.md": "/docs/development/",
+  "docs/development/adding-agents.md": "/docs/development/adding-agents/",
   "docs/guides/configuration.md": "/docs/guides/configuration/",
   "docs/cli/reference.md": "/docs/cli/reference/",
   "docs/api.md": "/docs/api/",
