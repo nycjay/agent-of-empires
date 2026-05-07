@@ -2,8 +2,10 @@
   <img src="assets/logo.png" alt="Agent of Empires" width="128">
   <h1 align="center">Agent of Empires (AoE)</h1>
   <p align="center">
+    <a href="https://trendshift.io/repositories/22434" target="_blank"><img src="https://trendshift.io/api/badge/repositories/22434" alt="njbrake%2Fagent-of-empires | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+  </p>
+  <p align="center">
     <a href="https://github.com/njbrake/agent-of-empires/actions/workflows/ci.yml"><img src="https://github.com/njbrake/agent-of-empires/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-    <a href="https://github.com/njbrake/agent-of-empires/releases"><img src="https://img.shields.io/github/v/release/njbrake/agent-of-empires" alt="GitHub release"></a>
     <a href="https://formulae.brew.sh/formula/aoe"><img src="https://img.shields.io/homebrew/v/aoe" alt="Homebrew"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
     <a href="https://clawhub.ai/njbrake/aoe"><img src="https://img.shields.io/badge/ClawHub-aoe-blue" alt="ClawHub"></a>
