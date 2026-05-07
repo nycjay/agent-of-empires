@@ -232,6 +232,18 @@ const AGENT_CONFIG_MOUNTS: &[AgentConfigMount] = &[
         preserve_files: &[],
         clean_files: &[],
     },
+    AgentConfigMount {
+        tool_name: "kiro",
+        host_rel: ".kiro",
+        container_suffix: ".kiro",
+        skip_entries: &["sandbox", "sessions", "logs", "cache"],
+        seed_files: &[],
+        copy_dirs: &["agents", "steering", "prompts", "settings"],
+        keychain_credential: None,
+        home_seed_files: &[],
+        preserve_files: &[],
+        clean_files: &[],
+    },
 ];
 
 /// Sync host agent config into the shared sandbox directory. Copies top-level files
@@ -961,10 +973,11 @@ pub(crate) fn build_container_config(
         .unwrap_or(true);
     if let Some(agent) = crate::agents::get_agent(tool) {
         if hooks_enabled {
-            // Hermes uses a YAML config; the generic hook_config path below
-            // assumes a JSON settings.json schema, so it's special-cased here.
+            // Hermes (YAML) and Kiro (per-agent JSON) use schemas the generic
+            // hook_config path below cannot emit, so they're special-cased here.
             let hermes_hooks = tool == "hermes";
-            if hermes_hooks || agent.hook_config.is_some() {
+            let kiro_hooks = tool == "kiro";
+            if hermes_hooks || kiro_hooks || agent.hook_config.is_some() {
                 let hook_dir = crate::hooks::hook_status_dir(instance_id);
                 if let Err(e) = std::fs::create_dir_all(&hook_dir) {
                     tracing::warn!(
@@ -985,6 +998,12 @@ pub(crate) fn build_container_config(
                 let config_file = sandbox_dir.join("config.yaml");
                 if let Err(e) = crate::hooks::install_hermes_hooks(&config_file) {
                     tracing::warn!("Failed to install hermes hooks in sandbox: {}", e);
+                }
+            } else if kiro_hooks {
+                let sandbox_dir = home.join(".kiro").join(SANDBOX_SUBDIR);
+                let config_file = sandbox_dir.join("agents").join("aoe-hooks.json");
+                if let Err(e) = crate::hooks::install_kiro_hooks(&config_file) {
+                    tracing::warn!("Failed to install kiro hooks in sandbox: {}", e);
                 }
             } else if let Some(hook_cfg) = &agent.hook_config {
                 // Install hooks into sandbox settings.json for the containerized agent.
