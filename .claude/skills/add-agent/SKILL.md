@@ -71,12 +71,16 @@ For pane-parsing agents, examine terminal content for running/waiting/idle signa
 If the agent supports hooks but uses a non-Claude format:
 
 1. Add a `MYAGENT_HOOKS` constant with `(event_name, status)` pairs in `src/hooks/mod.rs`
-2. Write `install_myagent_hooks()` and `uninstall_myagent_hooks()`
-3. Wire into `install_agent_status_hooks()` in `src/session/instance.rs`
-4. Add the tool name to `status_hook_env_prefix()` in `src/session/instance.rs`
-5. Add uninstall call in `uninstall_all_hooks()` in `src/hooks/mod.rs`
+2. Write `install_myagent_hooks()` and `uninstall_myagent_hooks()` — keep these as **pure file IO** (no subprocess calls) so tests don't mutate the developer's real environment
+3. If the agent needs a subprocess call (e.g., setting a default agent), put it in a separate public function (e.g., `set_myagent_default_if_builtin()`)
+4. Wire into `install_agent_status_hooks()` in `src/session/instance.rs` — call the file IO function, then the subprocess function for host sessions
+5. Add the tool name to `status_hook_env_prefix()` in `src/session/instance.rs`
+6. Add uninstall call in `uninstall_all_hooks()` in `src/hooks/mod.rs`
+7. Wire sandbox support in `build_container_config()` in `src/session/container_config.rs` — mount the sidecar volume and materialize the agent config inside the sandbox dir
 
 **Checkpoint:** `cargo test --lib myagent` passes, hooks file is created on session start.
+
+**Note:** If the agent doesn't have a tool-approval/permission event, status will never show "Waiting". Document this as a known limitation.
 
 #### Step 4: Container Config (`src/session/container_config.rs`)
 

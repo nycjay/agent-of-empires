@@ -250,7 +250,11 @@ hooks:
 
 ## Common Pitfalls
 
-- **Forgetting `status_hook_env_prefix`**: Without `AOE_INSTANCE_ID`, hooks write nothing.
-- **Wrong hook format**: Each agent has its own schema; test that hooks actually fire.
+- **Forgetting `status_hook_env_prefix`**: Without `AOE_INSTANCE_ID`, hooks write nothing. Add your tool name to the check in `src/session/instance.rs`.
+- **Wrong hook format**: Each agent has its own schema; test that hooks actually fire by sending a message and checking `/tmp/aoe-hooks/*/status`.
+- **Sandbox hooks are separate**: Host hook installation (`install_agent_status_hooks`) doesn't cover sandbox sessions. You also need to wire hooks into `build_container_config` in `src/session/container_config.rs` so the sidecar volume is mounted and the agent config is materialized inside the container.
+- **Don't shell out in `install_*_hooks()`**: Keep hook installation as pure file IO. Any subprocess calls (like setting a default agent) should be in a separate function so `cargo test` doesn't mutate the developer's real environment.
+- **Use structured output when parsing agent CLIs**: If the agent CLI has `--format json` or similar, use it instead of substring matching on human-readable output. Human-readable formats change between versions.
+- **Waiting status needs a dedicated event**: Not all agents have an approval/permission event. If the agent doesn't expose one, document it as a limitation and consider filing upstream.
 - **Redundant Dockerfile ENV**: Check if PATH is already set before adding another layer.
 - **`set_default_command`**: Only needed for agents where the binary name alone isn't sufficient (e.g., opencode needs explicit command storage).
